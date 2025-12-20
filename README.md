@@ -5,11 +5,12 @@ A standalone HTTP service that wraps the official `@playwright/mcp` package to p
 ## Features
 
 - 🌐 **HTTP-based MCP Protocol** - Access Playwright MCP via standard HTTP requests
-- 🚀 **Serverless Compatible** - Works in serverless/cloud environments (Railway, Render, Fly.io, etc.)
+- 🚀 **Serverless Compatible** - Works in serverless/cloud environments (Railway, Render, Fly.io, GCP Cloud Run, etc.)
 - 🔄 **MCP v0.1 Compatible** - Fully implements the Model Context Protocol specification
 - 🎭 **Full Playwright Support** - All Playwright browser automation tools available
 - 🐳 **Docker Ready** - Includes Dockerfile for easy containerization
 - ⚡ **Production Ready** - Health checks, graceful shutdown, error handling
+- ☁️ **Live Deployment** - Pre-deployed to Google Cloud Run (see below)
 
 ## Quick Start
 
@@ -22,8 +23,8 @@ A standalone HTTP service that wraps the official `@playwright/mcp` package to p
 
 ```bash
 # Clone the repository
-git clone <repository-url>
-cd playwright-mcp-http-server
+git clone https://github.com/mcpmessenger/playwright-mcp.git
+cd playwright-mcp
 
 # Install dependencies
 npm install
@@ -39,7 +40,17 @@ The server will start on port `8931` by default. You can access:
 
 - **Service Info**: http://localhost:8931/
 - **Health Check**: http://localhost:8931/health
-- **MCP Endpoint**: http://localhost:8931/mcp
+- **MCP Endpoint**: http://localhost:8931/mcp (POST only)
+
+### 🚀 Live Production Instance
+
+The service is deployed to Google Cloud Run and ready to use:
+
+- **Service URL**: https://playwright-mcp-http-server-554655392699.us-central1.run.app
+- **Health Check**: https://playwright-mcp-http-server-554655392699.us-central1.run.app/health
+- **MCP Endpoint**: https://playwright-mcp-http-server-554655392699.us-central1.run.app/mcp (POST only)
+
+You can use the live instance immediately without deploying your own. See [Usage Examples](#example-usage) below.
 
 ### Development
 
@@ -206,8 +217,11 @@ curl -X POST http://localhost:8931/mcp \
 ### Using JavaScript/TypeScript
 
 ```typescript
+// Use the live production instance or replace with your own deployment URL
+const MCP_SERVER_URL = 'https://playwright-mcp-http-server-554655392699.us-central1.run.app/mcp';
+
 async function callPlaywrightMCP(method: string, params?: any) {
-  const response = await fetch('http://localhost:8931/mcp', {
+  const response = await fetch(MCP_SERVER_URL, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
@@ -235,6 +249,8 @@ const screenshot = await callPlaywrightMCP('tools/call', {
   arguments: { fullPage: true },
 });
 ```
+
+**Note**: The `/mcp` endpoint requires POST requests with JSON-RPC 2.0 formatted messages. GET requests will return a 404 error.
 
 ## Deployment
 

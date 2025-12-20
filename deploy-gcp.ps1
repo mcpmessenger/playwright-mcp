@@ -60,8 +60,7 @@ gcloud run deploy $ServiceName `
     --cpu 2 `
     --timeout 300 `
     --max-instances 10 `
-    --set-env-vars "PLAYWRIGHT_HEADLESS=true,LOG_LEVEL=info" `
-    --set-env-vars "PORT=8931"
+    --set-env-vars "PLAYWRIGHT_HEADLESS=true,LOG_LEVEL=info"
 
 # Get the service URL
 $ServiceUrl = (gcloud run services describe $ServiceName --region $Region --format 'value(status.url)')
