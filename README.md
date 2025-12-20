@@ -169,6 +169,19 @@ All tools from `@playwright/mcp` are supported:
 
 For detailed tool parameters, see the [Playwright MCP documentation](https://github.com/microsoft/playwright-mcp).
 
+## Using the Server
+
+- Start locally with `npm install`, build (`npm run build`), then run `npm start` (or use `npm run dev` for auto-reload during development).
+- Call `/`, `/health`, or `/mcp` via curl/Postman/Playwright MCP clients; the `/mcp` endpoint accepts JSON-RPC POST requests (see the example below).
+- Adjust behavior by editing `.env` or setting env vars such as `PORT`, `PLAYWRIGHT_BROWSER`, and `PLAYWRIGHT_HEADLESS`.
+- Alternatively, containerize the service with `docker build -t playwright-mcp-http-server .` and `docker run -p 8931:8931 ...` for consistent deployments.
+
+## Updating the GitHub Repository
+
+- Pull the latest changes before making edits: `git pull --rebase origin main`.
+- Use `git status` to see touched files, then stage with `git add <files>` and commit with a descriptive message.
+- Push your branch with `git push origin HEAD` and open a pull request if the change needs review.
+
 ## Example Usage
 
 ### Using curl
