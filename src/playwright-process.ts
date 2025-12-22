@@ -43,14 +43,25 @@ export class PlaywrightProcessManager extends EventEmitter {
     console.log("[Playwright process] Starting Playwright MCP process...");
     // Spawn the Playwright MCP process
     // Use --isolated flag to allow multiple concurrent browser operations
-    // Set environment variables to ensure Playwright can find browsers
+    // Set environment variables to ensure Playwright can find browsers and pass browser args
+    const env: NodeJS.ProcessEnv = {
+      ...process.env,
+      PLAYWRIGHT_BROWSERS_PATH: process.env.PLAYWRIGHT_BROWSERS_PATH || undefined,
+    };
+    
+    // Pass PLAYWRIGHT_BROWSER_ARGS to the Playwright MCP process
+    // This allows configuration of browser launch arguments (e.g., --no-sandbox for Cloud Run)
+    if (process.env.PLAYWRIGHT_BROWSER_ARGS) {
+      env.PLAYWRIGHT_BROWSER_ARGS = process.env.PLAYWRIGHT_BROWSER_ARGS;
+      console.log(
+        `[Playwright process] Browser args: ${process.env.PLAYWRIGHT_BROWSER_ARGS}`
+      );
+    }
+    
     const proc = spawn("npx", ["-y", "@playwright/mcp@latest", "--isolated"], {
       stdio: ["pipe", "pipe", "pipe"],
       shell: process.platform === "win32",
-      env: {
-        ...process.env,
-        PLAYWRIGHT_BROWSERS_PATH: process.env.PLAYWRIGHT_BROWSERS_PATH || undefined,
-      },
+      env,
     });
 
     this.process = proc;
