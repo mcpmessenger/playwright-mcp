@@ -1,5 +1,5 @@
 /**
- * Express HTTP Server for Playwright MCP
+ * Express HTTP Server for Playwright MCP with Streamable-HTTP support
  */
 
 import express, { Request, Response, ErrorRequestHandler } from "express";
@@ -7,36 +7,45 @@ import cors from "cors";
 import { config } from "./config";
 import { MCPHandler } from "./mcp-handler";
 import { JSONRPCRequest } from "./types/mcp";
+import { createAuthMiddleware } from "./auth-middleware";
+import {
+  createRateLimitMiddleware,
+  createRequestValidationMiddleware,
+  createRequestTimeoutMiddleware,
+  createRequestLoggingMiddleware,
+} from "./security-middleware";
 
 const app = express();
-const mcpHandler = new MCPHandler();
+const mcpHandler = new MCPHandler(config.maxConcurrentBrowsers || 5);
 
-// Middleware
+// Trust proxy (required for Cloud Run and other reverse proxies)
+// This enables proper IP detection for rate limiting
+app.set("trust proxy", true);
+
+// Middleware - Order matters!
 app.use(cors({ origin: config.corsOrigin }));
 app.use(express.json({ limit: "10mb" }));
 
-// Request logging middleware
-app.use((req, res, next) => {
-  const start = Date.now();
-  res.on("finish", () => {
-    const duration = Date.now() - start;
-    console.log(
-      `[${new Date().toISOString()}] ${req.method} ${req.path} - ${res.statusCode} (${duration}ms)`
-    );
-  });
-  next();
-});
+// Enhanced request logging with IP tracking
+app.use(createRequestLoggingMiddleware());
+
+// Rate limiting (applies to all routes except health check)
+app.use(createRateLimitMiddleware(config));
+
+// Request timeout middleware
+app.use(createRequestTimeoutMiddleware(config));
 
 // Root endpoint - Service information
 app.get("/", (req: Request, res: Response) => {
   res.json({
     name: "Playwright MCP HTTP Server",
     version: "1.0.0",
-    protocol: "MCP v0.1",
+    protocol: "MCP v0.1 (Streamable-HTTP)",
     endpoints: {
       mcp: "/mcp",
       health: "/health",
     },
+    transport: "streamable-http",
   });
 });
 
@@ -53,8 +62,85 @@ app.get("/health", (req: Request, res: Response) => {
   });
 });
 
-// Main MCP protocol endpoint
-app.post("/mcp", async (req: Request, res: Response) => {
+// Authentication middleware for MCP endpoints
+const authMiddleware = createAuthMiddleware(config);
+
+// Request validation middleware for MCP endpoints
+const requestValidationMiddleware = createRequestValidationMiddleware(config);
+
+// Streamable-HTTP GET endpoint (Server-Sent Events)
+app.get("/mcp", authMiddleware, async (req: Request, res: Response) => {
+  // Check if client wants SSE
+  const acceptHeader = req.headers.accept || "";
+  if (!acceptHeader.includes("text/event-stream")) {
+    return res.status(400).json({
+      jsonrpc: "2.0",
+      id: null,
+      error: {
+        code: -32600,
+        message: "Invalid Request",
+        data: "GET /mcp requires Accept: text/event-stream header for Streamable-HTTP",
+      },
+    });
+  }
+
+  // Set SSE headers
+  res.setHeader("Content-Type", "text/event-stream");
+  res.setHeader("Cache-Control", "no-cache");
+  res.setHeader("Connection", "keep-alive");
+  res.setHeader("X-Accel-Buffering", "no"); // Disable nginx buffering
+
+  // Send initial connection message
+  res.write(": connected\n\n");
+  res.write(`data: ${JSON.stringify({ type: "connection", status: "open" })}\n\n`);
+
+  // Set up notification listener for server-to-client messages
+  const notificationHandler = (notification: any) => {
+    try {
+      res.write(`data: ${JSON.stringify(notification)}\n\n`);
+    } catch (error) {
+      console.error("[Server] Error writing SSE message:", error);
+      cleanup();
+    }
+  };
+
+  mcpHandler.on("notification", notificationHandler);
+
+  // Handle client disconnect
+  req.on("close", () => {
+    console.log("[Server] SSE connection closed");
+    cleanup();
+  });
+
+  req.on("aborted", () => {
+    console.log("[Server] SSE connection aborted");
+    cleanup();
+  });
+
+  function cleanup() {
+    mcpHandler.removeListener("notification", notificationHandler);
+    if (!res.headersSent || !res.writableEnded) {
+      res.end();
+    }
+  }
+
+  // Keep connection alive with periodic ping
+  const pingInterval = setInterval(() => {
+    try {
+      res.write(": ping\n\n");
+    } catch (error) {
+      clearInterval(pingInterval);
+      cleanup();
+    }
+  }, 30000); // Ping every 30 seconds
+
+  req.on("close", () => {
+    clearInterval(pingInterval);
+  });
+});
+
+// Main MCP protocol endpoint (POST for client-to-server messages)
+app.post("/mcp", authMiddleware, requestValidationMiddleware, async (req: Request, res: Response) => {
   try {
     const request: JSONRPCRequest = req.body;
 
@@ -117,6 +203,29 @@ async function startServer() {
     console.log("[Server] Initializing MCP handler...");
     await mcpHandler.initialize();
 
+    // Log authentication status
+    if (config.enableAuth) {
+      console.log("[Server] Authentication enabled");
+      if (config.authSecretName) {
+        console.log(`[Server] Using auth token from Secret Manager: ${config.authSecretName}`);
+      } else {
+        console.log("[Server] Using auth token from AUTH_TOKEN environment variable");
+      }
+    } else {
+      console.log("[Server] WARNING: Authentication is disabled - service is publicly accessible");
+    }
+
+    // Log security configuration
+    console.log("[Server] Security Configuration:");
+    console.log(`  - Rate limiting: ${config.rateLimitMax || 100} requests per ${Math.ceil((config.rateLimitWindowMs || 15 * 60 * 1000) / 60000)} minutes`);
+    console.log(`  - Request timeout: ${config.requestTimeoutMs || 30000}ms`);
+    console.log(`  - Max concurrent browsers: ${config.maxConcurrentBrowsers || 5}`);
+    if (config.allowedDomains && config.allowedDomains.length > 0) {
+      console.log(`  - Allowed domains: ${config.allowedDomains.join(", ")}`);
+    } else {
+      console.log("  - Allowed domains: All HTTP(S) URLs (no restrictions)");
+    }
+
     // Start HTTP server
     app.listen(config.port, () => {
       console.log(
@@ -124,6 +233,8 @@ async function startServer() {
       );
       console.log(`[Server] Health check: http://localhost:${config.port}/health`);
       console.log(`[Server] MCP endpoint: http://localhost:${config.port}/mcp`);
+      console.log(`[Server] Streamable-HTTP: GET /mcp with Accept: text/event-stream`);
+      console.log(`[Server] Protocol: POST /mcp for JSON-RPC messages`);
     });
   } catch (error) {
     console.error("[Server] Failed to start:", error);
@@ -164,4 +275,3 @@ process.on("unhandledRejection", (reason, promise) => {
 
 // Start the server
 startServer();
-

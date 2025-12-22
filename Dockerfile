@@ -44,14 +44,19 @@ RUN apt-get update && apt-get install -y \
 # Copy package files
 COPY package*.json ./
 
-# Install production dependencies only
-RUN npm ci --only=production && npm cache clean --force
+# Install ALL dependencies (including @playwright/mcp) to ensure browsers can be installed
+RUN npm ci && npm cache clean --force
+
+# Install Playwright browsers - use 'chrome' as that's what @playwright/mcp expects
+# The browsers will be installed to /root/.cache/ms-playwright
+RUN npx playwright install chrome
+RUN npx playwright install-deps chrome || true
+
+# Now remove dev dependencies to keep image size smaller (but keep @playwright/mcp)
+RUN npm prune --production
 
 # Copy built application from builder
 COPY --from=builder /app/dist ./dist
-
-# Install Playwright browsers (this will be done when @playwright/mcp is installed)
-# The npx command will download browsers on first run if needed
 
 # Expose port
 EXPOSE 8931

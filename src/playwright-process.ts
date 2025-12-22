@@ -42,9 +42,15 @@ export class PlaywrightProcessManager extends EventEmitter {
 
     console.log("[Playwright process] Starting Playwright MCP process...");
     // Spawn the Playwright MCP process
-    const proc = spawn("npx", ["-y", "@playwright/mcp@latest"], {
+    // Use --isolated flag to allow multiple concurrent browser operations
+    // Set environment variables to ensure Playwright can find browsers
+    const proc = spawn("npx", ["-y", "@playwright/mcp@latest", "--isolated"], {
       stdio: ["pipe", "pipe", "pipe"],
       shell: process.platform === "win32",
+      env: {
+        ...process.env,
+        PLAYWRIGHT_BROWSERS_PATH: process.env.PLAYWRIGHT_BROWSERS_PATH || undefined,
+      },
     });
 
     this.process = proc;

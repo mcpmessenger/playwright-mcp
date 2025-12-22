@@ -4,13 +4,15 @@ A standalone HTTP service that wraps the official `@playwright/mcp` package to p
 
 ## Features
 
-- 🌐 **HTTP-based MCP Protocol** - Access Playwright MCP via standard HTTP requests
+- 🌐 **Streamable-HTTP Transport** - Implements the 2025 MCP standard for remote connections
+- 🔒 **Bearer Token Authentication** - Secure authentication required for production use
 - 🚀 **Serverless Compatible** - Works in serverless/cloud environments (Railway, Render, Fly.io, GCP Cloud Run, etc.)
 - 🔄 **MCP v0.1 Compatible** - Fully implements the Model Context Protocol specification
+- 📡 **Server-Sent Events (SSE)** - Bidirectional streaming support for real-time notifications
 - 🎭 **Full Playwright Support** - All Playwright browser automation tools available
 - 🐳 **Docker Ready** - Includes Dockerfile for easy containerization
 - ⚡ **Production Ready** - Health checks, graceful shutdown, error handling
-- ☁️ **Live Deployment** - Pre-deployed to Google Cloud Run (see below)
+- ☁️ **Live Deployment** - Pre-deployed to Google Cloud Run with HTTPS (see below)
 
 ## Quick Start
 
@@ -40,7 +42,9 @@ The server will start on port `8931` by default. You can access:
 
 - **Service Info**: http://localhost:8931/
 - **Health Check**: http://localhost:8931/health
-- **MCP Endpoint**: http://localhost:8931/mcp (POST only)
+- **MCP Endpoint**: http://localhost:8931/mcp
+  - **POST** - Send JSON-RPC messages (client-to-server)
+  - **GET** - Open SSE connection (server-to-client) with `Accept: text/event-stream`
 
 ### 🚀 Live Production Instance
 
@@ -72,14 +76,49 @@ Configuration is done via environment variables. Create a `.env` file or set env
 | `MAX_SESSIONS` | (unlimited) | Maximum concurrent browser sessions |
 | `SESSION_TIMEOUT` | (none) | Session timeout in seconds |
 | `CORS_ORIGIN` | `*` | CORS allowed origins |
+| `AUTH_TOKEN` | (none) | Bearer token for authentication (required for production) |
+| `AUTH_SECRET_NAME` | (none) | GCP Secret Manager secret name (alternative to AUTH_TOKEN) |
+| `GCP_PROJECT_ID` | (auto) | GCP project ID (required if using AUTH_SECRET_NAME) |
 
 See `.env.example` for a template.
+
+## Authentication
+
+**⚠️ Important**: For production deployments, authentication is required to comply with the 2025 MCP Streamable-HTTP standard.
+
+### Setting Up Authentication
+
+1. **Direct Token** (Development/Testing):
+   ```bash
+   export AUTH_TOKEN="your-secure-token-here"
+   ```
+
+2. **GCP Secret Manager** (Production - Recommended):
+   ```bash
+   export AUTH_SECRET_NAME="playwright-mcp-auth-token"
+   export GCP_PROJECT_ID="your-project-id"
+   ```
+
+See [REGISTRY_CONFIG.md](./REGISTRY_CONFIG.md) for detailed authentication setup instructions.
+
+### Using Authentication
+
+All requests to `/mcp` require a bearer token:
+
+```bash
+curl -X POST http://localhost:8931/mcp \
+  -H "Authorization: Bearer your-token-here" \
+  -H "Content-Type: application/json" \
+  -d '{...}'
+```
 
 ## API Documentation
 
 ### POST /mcp
 
-Main MCP protocol endpoint. Accepts JSON-RPC 2.0 messages.
+Main MCP protocol endpoint for client-to-server messages. Accepts JSON-RPC 2.0 messages.
+
+**Authentication**: Required (Bearer token)
 
 **Request:**
 ```json
@@ -232,11 +271,32 @@ curl -X POST http://localhost:8931/mcp \
 ```typescript
 // Use the live production instance or replace with your own deployment URL
 const MCP_SERVER_URL = 'https://playwright-mcp-http-server-554655392699.us-central1.run.app/mcp';
+const AUTH_TOKEN = 'your-token-here'; // Required for production
 
+// Open SSE connection for server-to-client notifications
+const eventSource = new EventSource(MCP_SERVER_URL, {
+  headers: {
+    'Authorization': `Bearer ${AUTH_TOKEN}`
+  }
+});
+
+eventSource.onmessage = (event) => {
+  const notification = JSON.parse(event.data);
+  console.log('Server notification:', notification);
+};
+
+eventSource.onerror = (error) => {
+  console.error('SSE connection error:', error);
+};
+
+// Send JSON-RPC requests (client-to-server)
 async function callPlaywrightMCP(method: string, params?: any) {
   const response = await fetch(MCP_SERVER_URL, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: { 
+      'Content-Type': 'application/json',
+      'Authorization': `Bearer ${AUTH_TOKEN}`
+    },
     body: JSON.stringify({
       jsonrpc: '2.0',
       id: Date.now(),
@@ -263,7 +323,32 @@ const screenshot = await callPlaywrightMCP('tools/call', {
 });
 ```
 
-**Note**: The `/mcp` endpoint requires POST requests with JSON-RPC 2.0 formatted messages. GET requests will return a 404 error.
+**Note**: For production, always use HTTPS and include the bearer token in the `Authorization` header.
+
+### GET /mcp (Streamable-HTTP)
+
+Opens a Server-Sent Events (SSE) connection for server-to-client messages. This implements the Streamable-HTTP transport protocol.
+
+**Authentication**: Required (Bearer token)  
+**Headers**: `Accept: text/event-stream`
+
+**Example:**
+```bash
+curl -N -H "Accept: text/event-stream" \
+     -H "Authorization: Bearer your-token-here" \
+     http://localhost:8931/mcp
+```
+
+The connection will:
+- Send connection confirmation
+- Forward MCP notifications from the Playwright process
+- Send periodic ping messages to keep the connection alive
+- Close gracefully when the client disconnects
+
+**Note**: 
+- POST `/mcp` is for sending JSON-RPC requests (client-to-server)
+- GET `/mcp` is for receiving notifications via SSE (server-to-client)
+- Both endpoints require authentication when `AUTH_TOKEN` or `AUTH_SECRET_NAME` is set
 
 ## Deployment
 
@@ -290,18 +375,36 @@ The service will use Railway's `$PORT` environment variable automatically.
 
 See [DEPLOY_GCP.md](./DEPLOY_GCP.md) for detailed instructions.
 
-Quick deploy:
+**Quick deploy with authentication:**
 
 ```bash
 # Set your project ID
 export GCP_PROJECT_ID="your-project-id"
 
-# Deploy (Linux/Mac)
+# Option 1: Deploy with bearer token (recommended)
+export AUTH_MODE=token
+export AUTH_TOKEN=$(openssl rand -hex 32)  # Generate secure token
 chmod +x deploy-gcp.sh && ./deploy-gcp.sh
 
-# Deploy (Windows PowerShell)
+# Option 2: Deploy with Secret Manager (best for production)
+export AUTH_MODE=secret
+export AUTH_SECRET_NAME="playwright-mcp-auth-token"
+chmod +x deploy-gcp.sh && ./deploy-gcp.sh
+
+# Option 3: Deploy without authentication (development only - NOT recommended)
+export AUTH_MODE=public
+chmod +x deploy-gcp.sh && ./deploy-gcp.sh
+```
+
+**Windows PowerShell:**
+```powershell
+$env:GCP_PROJECT_ID = "your-project-id"
+$env:AUTH_MODE = "token"
+$env:AUTH_TOKEN = [System.Convert]::ToBase64String([System.Security.Cryptography.RandomNumberGenerator]::GetBytes(32))
 .\deploy-gcp.ps1 -ProjectId "your-project-id"
 ```
+
+**⚠️ Security Note**: Always use authentication (`AUTH_MODE=token` or `AUTH_MODE=secret`) for production deployments. Public access (`AUTH_MODE=public`) should only be used for local development.
 
 Or manually:
 
@@ -365,17 +468,46 @@ services:
       start_period: 40s
 ```
 
+## Streamable-HTTP (2025 MCP Standard)
+
+This service implements the **Streamable-HTTP** transport protocol, which is the 2025 MCP standard for remote connections. Streamable-HTTP requires:
+
+- ✅ **HTTPS** - Automatically provided by Cloud Run
+- ✅ **Bearer Token Authentication** - Required for production use
+- ✅ **Server-Sent Events (SSE)** - For server-to-client streaming
+- ✅ **POST Endpoint** - For client-to-server JSON-RPC messages
+
+### Registry Configuration
+
+To register this service with an MCP registry, use this configuration:
+
+```json
+{
+  "name": "playwright-service",
+  "transport": "streamable-http",
+  "url": "https://your-service-url.run.app/mcp",
+  "auth": {
+    "type": "bearer",
+    "token": "your-secure-token"
+  }
+}
+```
+
+See [REGISTRY_CONFIG.md](./REGISTRY_CONFIG.md) for complete registry setup instructions.
+
 ## Architecture
 
 The service works by:
 
-1. **HTTP Server** (Express) receives JSON-RPC requests
-2. **MCP Handler** processes the requests and routes them to Playwright
-3. **Playwright Process Manager** spawns `@playwright/mcp` as a child process
-4. **STDIO Communication** handles JSON-RPC messages via stdin/stdout
-5. **Response** is formatted and returned via HTTP
+1. **HTTP Server** (Express) receives JSON-RPC requests and SSE connections
+2. **Authentication Middleware** validates bearer tokens
+3. **MCP Handler** processes the requests and routes them to Playwright
+4. **Playwright Process Manager** spawns `@playwright/mcp` as a child process
+5. **STDIO Communication** handles JSON-RPC messages via stdin/stdout
+6. **SSE Streaming** forwards server notifications to connected clients
+7. **Response** is formatted and returned via HTTP
 
-This architecture allows the Playwright process to run independently while being accessible via HTTP.
+This architecture allows the Playwright process to run independently while being accessible via HTTP/HTTPS with full Streamable-HTTP support.
 
 ## Troubleshooting
 

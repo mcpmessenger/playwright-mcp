@@ -2,6 +2,7 @@
  * MCP Protocol Handler - bridges HTTP requests to Playwright MCP process
  */
 
+import { EventEmitter } from "events";
 import {
   JSONRPCRequest,
   JSONRPCResponse,
@@ -9,17 +10,40 @@ import {
 } from "./types/mcp";
 import { PlaywrightProcessManager } from "./playwright-process";
 
-export class MCPHandler {
+export class MCPHandler extends EventEmitter {
   private processManager: PlaywrightProcessManager;
+  private activeOperations: number = 0;
+  private maxConcurrentOperations: number = 5;
 
-  constructor() {
+  constructor(maxConcurrentOperations: number = 5) {
+    super();
     this.processManager = new PlaywrightProcessManager();
+    this.maxConcurrentOperations = maxConcurrentOperations;
+    
+    // Forward notifications from process manager to SSE clients
+    this.processManager.on("notification", (notification) => {
+      this.emit("notification", notification);
+    });
   }
 
   /**
    * Handle an MCP JSON-RPC request
    */
   async handle(request: JSONRPCRequest): Promise<JSONRPCResponse> {
+    // Check if we've hit the max concurrent operations limit
+    if (this.activeOperations >= this.maxConcurrentOperations) {
+      console.warn(
+        `[MCP Handler] Maximum concurrent operations (${this.maxConcurrentOperations}) reached. Request rejected.`
+      );
+      return this.errorResponse(
+        request.id,
+        -32603,
+        "Internal Error",
+        `Maximum concurrent browser operations (${this.maxConcurrentOperations}) reached. Please try again later.`
+      );
+    }
+
+    this.activeOperations++;
     try {
       // Validate JSON-RPC version
       if (request.jsonrpc !== "2.0") {
@@ -57,6 +81,8 @@ export class MCPHandler {
         "Internal Error",
         error.message || "Unknown error"
       );
+    } finally {
+      this.activeOperations--;
     }
   }
 
