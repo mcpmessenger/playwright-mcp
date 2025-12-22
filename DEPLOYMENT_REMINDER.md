@@ -11,6 +11,7 @@
 4. ✅ Request timeouts (30 seconds)
 5. ✅ Resource limits (max 5 concurrent browsers)
 6. ✅ Enhanced logging (IP tracking)
+7. ✅ Browser arguments support (`PLAYWRIGHT_BROWSER_ARGS` environment variable)
 
 ## Deployment Steps
 
@@ -93,6 +94,16 @@ The new security features use default values but can be customized via environme
 # Optional: Customize security settings
 gcloud run services update playwright-mcp-http-server \
   --update-env-vars "RATE_LIMIT_MAX=200,REQUEST_TIMEOUT_MS=60000,MAX_CONCURRENT_BROWSERS=10" \
+  --region us-central1
+```
+
+### Browser Arguments for Cloud Run
+
+For Cloud Run deployments, configure browser launch arguments:
+
+```bash
+gcloud run services update playwright-mcp-http-server \
+  --update-env-vars "PLAYWRIGHT_BROWSER_ARGS=--no-sandbox --disable-setuid-sandbox --disable-dev-shm-usage --disable-gpu" \
   --region us-central1
 ```
 
