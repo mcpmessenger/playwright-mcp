@@ -23,7 +23,8 @@
     "@playwright/mcp": "latest",
     "cors": "^2.8.5",
     "express": "^4.18.2",
-    "express-rate-limit": "^8.2.1"
+    "express-rate-limit": "^8.2.1",
+    "playwright": "^1.40.0"
   },
   "devDependencies": {
     "@types/cors": "^2.8.17",

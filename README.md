@@ -2,6 +2,8 @@
 
 A standalone HTTP service that wraps the official `@playwright/mcp` package to provide browser automation capabilities via HTTP endpoints. This service enables the use of Playwright MCP in serverless environments where STDIO-based communication is not possible.
 
+**🎯 Now Enhanced as a Visual Sensor Skill** - Beyond browser automation, this server provides intelligent, privacy-aware, and user-friendly web interaction capabilities.
+
 ## Features
 
 - 🌐 **Streamable-HTTP Transport** - Implements the 2025 MCP standard for remote connections
@@ -13,6 +15,15 @@ A standalone HTTP service that wraps the official `@playwright/mcp` package to p
 - 🐳 **Docker Ready** - Includes Dockerfile for easy containerization
 - ⚡ **Production Ready** - Health checks, graceful shutdown, error handling
 - ☁️ **Live Deployment** - Pre-deployed to Google Cloud Run with HTTPS (see below)
+
+### 🆕 Visual Sensor Skill Features
+
+- 🔍 **Snapshot-First Logic** - Token-efficient accessibility tree snapshots (no full DOM needed)
+- 🛡️ **PII Blurring (Agentic Security)** - Automatic redaction of emails, credit cards, phone numbers, and other PII from screenshots
+- 👤 **Human-in-the-Loop (Elicitation)** - Detects MFA/login walls and requests user input instead of failing
+- 🎯 **High-Level Skills** - Skill-based tools (e.g., `perform_checkout`) that handle complex workflows internally
+
+See [VISUAL_SENSOR_SKILL_IMPLEMENTATION.md](./VISUAL_SENSOR_SKILL_IMPLEMENTATION.md) for detailed documentation.
 
 ## Quick Start
 
@@ -192,13 +203,15 @@ The server supports all standard MCP methods:
 - `tools/list` - List available Playwright tools
 - `tools/call` - Invoke a Playwright tool
 
-### Available Playwright Tools
+### Available Tools
+
+#### Standard Playwright Tools
 
 All tools from `@playwright/mcp` are supported:
 
 - `browser_navigate` - Navigate to a URL
-- `browser_snapshot` - Get accessibility snapshot
-- `browser_take_screenshot` - Capture screenshot
+- `browser_snapshot` - Get accessibility snapshot (uses accessibility tree for token efficiency)
+- `browser_take_screenshot` - Capture screenshot (automatically redacts PII)
 - `browser_click` - Click an element
 - `browser_type` - Type text
 - `browser_fill_form` - Fill form fields
@@ -206,7 +219,25 @@ All tools from `@playwright/mcp` are supported:
 - `browser_wait_for` - Wait for conditions
 - `browser_close` - Close browser/page
 
-For detailed tool parameters, see the [Playwright MCP documentation](https://github.com/microsoft/playwright-mcp).
+#### Custom Visual Sensor Skill Tools
+
+- `get_accessibility_snapshot` - Token-efficient accessibility tree snapshot (snapshot-first approach)
+  - Returns only interactive elements
+  - Reduces token usage vs full DOM
+  - Optimized for LLM consumption
+
+- `perform_checkout` - High-level checkout skill
+  - Orchestrates complete checkout process
+  - Handles navigation, form filling, error handling, and retries internally
+  - Returns only final confirmation
+
+- `fill_form_skill` - Intelligent form filling
+  - Automatically detects and fills form fields
+  - Uses browser_fill_form internally with smart field detection
+
+**Note**: Screenshots from `browser_take_screenshot` automatically have PII redacted before being returned. Login walls and MFA requirements automatically trigger elicitation requests via notifications.
+
+For detailed tool parameters, see the [Playwright MCP documentation](https://github.com/microsoft/playwright-mcp) and [VISUAL_SENSOR_SKILL_IMPLEMENTATION.md](./VISUAL_SENSOR_SKILL_IMPLEMENTATION.md).
 
 ## Using the Server
 
@@ -214,6 +245,16 @@ For detailed tool parameters, see the [Playwright MCP documentation](https://git
 - Call `/`, `/health`, or `/mcp` via curl/Postman/Playwright MCP clients; the `/mcp` endpoint accepts JSON-RPC POST requests (see the example below).
 - Adjust behavior by editing `.env` or setting env vars such as `PORT`, `PLAYWRIGHT_BROWSER`, and `PLAYWRIGHT_HEADLESS`.
 - Alternatively, containerize the service with `docker build -t playwright-mcp-http-server .` and `docker run -p 8931:8931 ...` for consistent deployments.
+
+### Visual Sensor Skill Capabilities
+
+The server automatically:
+- ✅ **Redacts PII** from screenshots (emails, credit cards, phone numbers, SSNs)
+- ✅ **Detects login walls** and sends elicitation requests via notifications
+- ✅ **Provides token-efficient snapshots** via accessibility tree
+- ✅ **Offers high-level skills** for complex workflows
+
+See [VISUAL_SENSOR_SKILL_IMPLEMENTATION.md](./VISUAL_SENSOR_SKILL_IMPLEMENTATION.md) for detailed documentation on these features.
 
 ## Updating the GitHub Repository
 
@@ -250,7 +291,7 @@ curl -X POST http://localhost:8931/mcp \
     }
   }'
 
-# Take a screenshot
+# Take a screenshot (PII automatically redacted)
 curl -X POST http://localhost:8931/mcp \
   -H "Content-Type: application/json" \
   -d '{
@@ -261,6 +302,40 @@ curl -X POST http://localhost:8931/mcp \
       "name": "browser_take_screenshot",
       "arguments": {
         "fullPage": true
+      }
+    }
+  }'
+
+# Get accessibility snapshot (token-efficient)
+curl -X POST http://localhost:8931/mcp \
+  -H "Content-Type: application/json" \
+  -d '{
+    "jsonrpc": "2.0",
+    "id": 4,
+    "method": "tools/call",
+    "params": {
+      "name": "get_accessibility_snapshot",
+      "arguments": {
+        "interestingOnly": true
+      }
+    }
+  }'
+
+# Use high-level checkout skill
+curl -X POST http://localhost:8931/mcp \
+  -H "Content-Type: application/json" \
+  -d '{
+    "jsonrpc": "2.0",
+    "id": 5,
+    "method": "tools/call",
+    "params": {
+      "name": "perform_checkout",
+      "arguments": {
+        "cartData": {
+          "items": [{"name": "Product", "quantity": 1}],
+          "shippingAddress": {"name": "...", "address": "..."},
+          "paymentMethod": {"type": "card", "cardNumber": "..."}
+        }
       }
     }
   }'

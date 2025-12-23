@@ -1,5 +1,6 @@
 /**
  * MCP Protocol Handler - bridges HTTP requests to Playwright MCP process
+ * Enhanced with Visual Sensor Skill capabilities: accessibility snapshots, PII redaction, elicitation, and skills
  */
 
 import { EventEmitter } from "events";
@@ -9,9 +10,12 @@ import {
   JSONRPCError,
 } from "./types/mcp";
 import { PlaywrightProcessManager } from "./playwright-process";
+import { ToolInterceptor } from "./tool-interceptor";
+import { config } from "./config";
 
 export class MCPHandler extends EventEmitter {
   private processManager: PlaywrightProcessManager;
+  private toolInterceptor: ToolInterceptor;
   private activeOperations: number = 0;
   private maxConcurrentOperations: number = 5;
 
@@ -20,8 +24,17 @@ export class MCPHandler extends EventEmitter {
     this.processManager = new PlaywrightProcessManager();
     this.maxConcurrentOperations = maxConcurrentOperations;
     
-    // Forward notifications from process manager to SSE clients
+    // Create tool interceptor with PII redaction enabled
+    this.toolInterceptor = new ToolInterceptor(this.processManager, {
+      piiRedactionEnabled: true,
+    });
+    
+    // Forward notifications from process manager and tool interceptor to SSE clients
     this.processManager.on("notification", (notification) => {
+      this.emit("notification", notification);
+    });
+    
+    this.toolInterceptor.on("notification", (notification) => {
       this.emit("notification", notification);
     });
   }
@@ -65,14 +78,9 @@ export class MCPHandler extends EventEmitter {
         );
       }
 
-      // Handle the request
-      const result = await this.processManager.sendMessage(request);
-
-      return {
-        jsonrpc: "2.0",
-        id: request.id,
-        result,
-      };
+      // Handle the request through tool interceptor (which adds custom tools and post-processing)
+      const response = await this.toolInterceptor.handle(request);
+      return response;
     } catch (error: any) {
       console.error("[MCP Handler] Error:", error);
       return this.errorResponse(
@@ -127,6 +135,7 @@ export class MCPHandler extends EventEmitter {
    * Cleanup resources
    */
   async cleanup(): Promise<void> {
+    await this.toolInterceptor.cleanup();
     this.processManager.kill();
   }
 
